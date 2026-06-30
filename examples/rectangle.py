@@ -1,7 +1,7 @@
-"""Example: yield/quality Monte Carlo for a manufactured rectangle.
+"""例: 製造された長方形の歩留まり／品質モンテカルロ。
 
-Each trial draws a width and height from normal distributions, computes the
-area, and checks whether it meets a minimum-area spec. Run with::
+各試行で幅と高さを正規分布から引き、面積を計算し、最小面積の規格を満たすか
+判定する。実行方法::
 
     uv run python examples/rectangle.py
 """
@@ -18,11 +18,11 @@ def trial(
     width: NDArray[np.float64],
     height: NDArray[np.float64],
 ) -> dict[str, NDArray[np.generic]]:
-    """One manufactured part.
+    """製品1個ぶんの試行。
 
-    Written as an ordinary function: ``width`` and ``height`` arrive as NumPy
-    arrays (the whole chunk at once), so this runs fully vectorized even though
-    it reads like single-trial code.
+    普通の関数として書く: ``width`` と ``height`` は NumPy 配列として
+    (チャンクぶんをまとめて) 渡される。そのため、1試行ぶんのコードに見えても
+    完全にベクトル化されて実行される。
     """
     area = width * height
     passed = area >= 48.0
@@ -38,7 +38,7 @@ def main() -> None:
         trial=trial,
         outputs={
             "area": ["mean", "std", "min", "max", ("q", 0.05), ("q", 0.95)],
-            "passed": ["mean"],  # mean of a boolean column == pass rate
+            "passed": ["mean"],  # bool列の平均 ＝ 合格率
         },
     )
 

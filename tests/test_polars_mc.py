@@ -344,6 +344,55 @@ def test_array_trial_must_return_dict() -> None:
         sim.run(1000, seed=0)
 
 
+# --------------------------------------------------------------------------- #
+# Process backend
+# --------------------------------------------------------------------------- #
+
+
+def test_processes_backend_matches_sequential() -> None:
+    from mp_helpers import rectangle_array_trial as mp_trial
+
+    sim = Simulation(
+        inputs={"w": Normal(10.0, 0.2), "h": Normal(5.0, 0.1)},
+        trial=mp_trial,
+        outputs={"area": ["mean", "std", "min", "max"], "passed": ["mean"]},
+    )
+    seq = sim.run(200_000, chunk_size=25_000, seed=4, backend="sequential")
+    par = sim.run(200_000, chunk_size=25_000, seed=4, backend="processes", n_workers=2)
+    # Per-chunk seeding makes the parallel result identical, bit for bit.
+    assert seq.to_dict() == par.to_dict()
+
+
+def test_processes_single_chunk_runs() -> None:
+    from mp_helpers import rectangle_array_trial as mp_trial
+
+    sim = Simulation(
+        inputs={"w": Normal(10.0, 0.2), "h": Normal(5.0, 0.1)},
+        trial=mp_trial,
+        outputs={"area": ["mean"]},
+    )
+    # One chunk -> short-circuits to local execution, still valid.
+    r = sim.run(10_000, chunk_size=10_000, seed=4, backend="processes")
+    assert r.value("area", "mean") == pytest.approx(50.0, abs=0.05)
+
+
+def test_processes_rejects_unpicklable_trial() -> None:
+    sim = Simulation(
+        inputs={"w": Normal(0.0, 1.0)},
+        trial=lambda w: {"y": w},  # lambda is not picklable
+        outputs={"y": ["mean"]},
+        trial_style="array",
+    )
+    with pytest.raises(ValueError, match="picklable"):
+        sim.run(100_000, chunk_size=10_000, seed=0, backend="processes")
+
+
+def test_unknown_backend_raises() -> None:
+    sim = make_sim()
+    with pytest.raises(ValueError):
+        sim.run(100_000, seed=0, backend="threads")  # type: ignore[arg-type]
+
+
 def test_to_polars_long_form() -> None:
     sim = Simulation(
         inputs={"x": Normal(0.0, 1.0)},

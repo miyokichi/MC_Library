@@ -37,6 +37,7 @@ from .distributions import (
 from .engine import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_QUANTILE_SAMPLE_SIZE,
+    Backend,
     Simulation,
 )
 from .result import SimulationResult
@@ -46,6 +47,7 @@ __version__ = "0.1.0"
 __all__ = [
     "Simulation",
     "SimulationResult",
+    "Backend",
     "Distribution",
     "Normal",
     "Uniform",

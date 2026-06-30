@@ -14,7 +14,10 @@ from __future__ import annotations
 
 import numpy as np
 
-__all__ = ["spawn_generators"]
+__all__ = ["spawn_generators", "Generator"]
+
+# Re-exported so other modules share a single name for the RNG type.
+Generator = np.random.Generator
 
 
 def spawn_generators(seed: int, n_chunks: int) -> list[np.random.Generator]:
