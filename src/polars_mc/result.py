@@ -1,4 +1,4 @@
-"""The object returned from a simulation run."""
+"""Result objects for statistics and simulations."""
 
 from __future__ import annotations
 
@@ -6,21 +6,19 @@ from dataclasses import dataclass
 
 import polars as pl
 
-__all__ = ["SimulationResult"]
+__all__ = ["StatResult", "SimulationResult"]
 
 
 @dataclass(frozen=True)
-class SimulationResult:
-    """Aggregated outcome of a Monte Carlo run.
+class StatResult:
+    """Aggregated statistics over a set of observations.
 
-    ``stats`` maps each output column to ``{statistic_label: value}``.  Quantiles
-    estimated from a subsample (rather than the full population) are listed in
+    ``stats`` maps each column to ``{statistic_label: value}``.  Quantiles
+    estimated from a bounded reservoir (rather than the full data) are listed in
     ``approximate_columns``.
     """
 
-    n_trials: int
-    n_chunks: int
-    seed: int
+    n: int
     stats: dict[str, dict[str, float]]
     approximate_columns: frozenset[str]
 
@@ -46,12 +44,12 @@ class SimulationResult:
             schema={"column": pl.String, "statistic": pl.String, "value": pl.Float64},
         )
 
+    def _summary_header(self) -> str:
+        return f"Statistics over {self.n:,} observations"
+
     def summary(self) -> str:
         """Human-readable multi-line summary."""
-        lines = [
-            f"Monte Carlo simulation: {self.n_trials:,} trials "
-            f"in {self.n_chunks} chunk(s), seed={self.seed}",
-        ]
+        lines = [self._summary_header()]
         for col, values in self.stats.items():
             approx = " (quantiles approximate)" if col in self.approximate_columns else ""
             lines.append(f"  {col}{approx}:")
@@ -61,3 +59,21 @@ class SimulationResult:
 
     def __repr__(self) -> str:
         return self.summary()
+
+
+@dataclass(frozen=True)
+class SimulationResult(StatResult):
+    """A :class:`StatResult` from a Monte Carlo run, with run metadata."""
+
+    n_chunks: int = 0
+    seed: int = 0
+
+    @property
+    def n_trials(self) -> int:
+        return self.n
+
+    def _summary_header(self) -> str:
+        return (
+            f"Monte Carlo simulation: {self.n:,} trials "
+            f"in {self.n_chunks} chunk(s), seed={self.seed}"
+        )

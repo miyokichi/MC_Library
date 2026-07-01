@@ -15,10 +15,18 @@ from polars_mc import (
     LogNormal,
     Normal,
     Simulation,
+    Summarizer,
     Triangular,
     Uniform,
+    chunk_sizes,
+    map_reduce_chunks,
+    merge,
+    sample,
+    sample_chunks,
+    summarize,
+    summarize_partial,
 )
-from polars_mc.aggregate import Moments, parse_outputs
+from polars_mc.aggregate import Moments, Reservoir, parse_outputs
 from polars_mc.chunk import classify_trial
 from polars_mc.rng import spawn_generators
 
@@ -391,6 +399,148 @@ def test_unknown_backend_raises() -> None:
     sim = make_sim()
     with pytest.raises(ValueError):
         sim.run(100_000, seed=0, backend="threads")  # type: ignore[arg-type]
+
+
+# --------------------------------------------------------------------------- #
+# Standalone: random generation
+# --------------------------------------------------------------------------- #
+
+
+def test_sample_shape_and_reproducibility() -> None:
+    inputs = {"w": Normal(10.0, 0.2), "h": Normal(5.0, 0.1)}
+    a = sample(inputs, 1000, seed=42)
+    b = sample(inputs, 1000, seed=42)
+    assert a.columns == ["w", "h"]
+    assert a.height == 1000
+    assert a.equals(b)
+    assert not a.equals(sample(inputs, 1000, seed=43))
+
+
+def test_sample_chunks_cover_all_rows_reproducibly() -> None:
+    inputs = {"w": Normal(0.0, 1.0)}
+    chunks = list(sample_chunks(inputs, 1000, chunk_size=250, seed=1))
+    assert [c.height for c in chunks] == [250, 250, 250, 250]
+    again = list(sample_chunks(inputs, 1000, chunk_size=250, seed=1))
+    for c1, c2 in zip(chunks, again):
+        assert c1.equals(c2)
+
+
+def test_sample_matches_simulation_first_chunk() -> None:
+    # sample(seed) uses the same stream as a single-chunk run(seed).
+    inputs = {"w": Normal(3.0, 1.0)}
+    df = sample(inputs, 50_000, seed=5)
+    sim = Simulation(inputs=inputs, trial=lambda w: {"w": w}, outputs={"w": ["mean"]})
+    r = sim.run(50_000, chunk_size=50_000, seed=5)
+    assert float(df["w"].mean()) == pytest.approx(r.value("w", "mean"), rel=1e-12)
+
+
+# --------------------------------------------------------------------------- #
+# Standalone: statistics
+# --------------------------------------------------------------------------- #
+
+
+def test_summarize_one_shot() -> None:
+    df = sample({"x": Normal(2.0, 1.0)}, 100_000, seed=0)
+    stats = summarize(df, {"x": ["mean", "std", "min", "max"]})
+    assert stats.value("x", "mean") == pytest.approx(2.0, abs=0.02)
+
+
+def test_summarize_accepts_mapping() -> None:
+    stats = summarize({"x": np.arange(101.0)}, {"x": ["mean", ("q", 0.5)]})
+    assert stats.value("x", "mean") == 50.0
+    assert stats.value("x", "q0.5") == 50.0
+
+
+def test_summarize_partial_merge_equals_one_shot() -> None:
+    values = np.random.default_rng(0).normal(5.0, 2.0, size=90_000)
+    spec = {"x": ["mean", "std", "min", "max", ("q", 0.5)]}
+
+    whole = summarize({"x": values}, spec, quantile_sample_size=1_000_000)
+    parts = [
+        summarize_partial({"x": part}, spec, quantile_sample_size=1_000_000)
+        for part in np.array_split(values, 9)
+    ]
+    merged = merge(*parts).result()
+
+    for stat in ("mean", "std", "min", "max", "q0.5"):
+        assert merged.value("x", stat) == pytest.approx(whole.value("x", stat), rel=1e-9)
+
+
+def test_summarizer_loop_equals_one_shot() -> None:
+    values = np.random.default_rng(1).normal(0.0, 1.0, size=50_000)
+    spec = {"x": ["mean", "std", "min", "max", "median"]}
+
+    s = Summarizer(spec, quantile_sample_size=1_000_000)
+    for part in np.array_split(values, 7):
+        s.update({"x": part})
+    looped = s.result()
+    whole = summarize({"x": values}, spec, quantile_sample_size=1_000_000)
+
+    for stat in ("mean", "std", "min", "max", "median"):
+        assert looped.value("x", stat) == pytest.approx(whole.value("x", stat), rel=1e-9)
+
+
+def test_summarizer_merge() -> None:
+    spec = {"x": ["mean", "count"]}
+    a = Summarizer(spec).update({"x": np.zeros(100)})
+    b = Summarizer(spec).update({"x": np.full(100, 2.0)})
+    a.merge(b)
+    assert a.result().value("x", "count") == 200
+    assert a.result().value("x", "mean") == 1.0
+
+
+# --------------------------------------------------------------------------- #
+# Standalone: reservoir + chunk driver
+# --------------------------------------------------------------------------- #
+
+
+def test_reservoir_exact_within_capacity() -> None:
+    rng = np.random.default_rng(0)
+    r = Reservoir.from_values(np.arange(10.0), capacity=100, rng=rng)
+    assert r.is_exact
+    assert sorted(r.values.tolist()) == list(range(10))
+
+
+def test_reservoir_merge_is_bounded_and_uniform() -> None:
+    rng = np.random.default_rng(0)
+    r = Reservoir.empty(1000)
+    for _ in range(20):
+        r = r.merge(Reservoir.from_values(rng.random(5000), capacity=1000, rng=rng))
+    assert r.values.size == 1000
+    assert r.count == 100_000
+    assert not r.is_exact
+    # A uniform sample of Uniform(0,1) has mean ~0.5.
+    assert float(r.values.mean()) == pytest.approx(0.5, abs=0.03)
+
+
+def test_map_reduce_chunks_folds_partials() -> None:
+    total = map_reduce_chunks(
+        1000,
+        chunk_size=256,
+        seed=0,
+        map_fn=lambda n, rng: n,
+        reduce_fn=lambda a, b: a + b,
+    )
+    assert total == 1000
+
+
+def test_map_reduce_chunks_reproducible_with_rng() -> None:
+    def draw(n: int, rng: np.random.Generator) -> float:
+        return float(rng.random())
+
+    a = map_reduce_chunks(
+        900, chunk_size=300, seed=7, map_fn=draw, reduce_fn=lambda x, y: x + y
+    )
+    b = map_reduce_chunks(
+        900, chunk_size=300, seed=7, map_fn=draw, reduce_fn=lambda x, y: x + y
+    )
+    assert a == b
+
+
+def test_chunk_sizes() -> None:
+    assert chunk_sizes(1000, 250) == [250, 250, 250, 250]
+    assert chunk_sizes(1000, 300) == [300, 300, 300, 100]
+    assert chunk_sizes(100, 1000) == [100]
 
 
 def test_to_polars_long_form() -> None:

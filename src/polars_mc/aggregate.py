@@ -1,14 +1,19 @@
 """Chunk-mergeable statistics.
 
 Across chunks we can only combine statistics that are *additive*.  We track,
-per output column, the standard set of moments (count / mean / M2 / min / max)
-and merge them with Chan's parallel algorithm, which is numerically stable.
+per column, the standard set of moments (count / mean / M2 / min / max) and
+merge them with Chan's parallel algorithm, which is numerically stable.
 
-Quantiles are **not** additive.  For them we keep a bounded, uniform random
-subsample per column (the engine decides each chunk's subsample size so the
-pool stays close to a target budget) and estimate the quantile from the pooled
-sample at the end.  When the whole simulation fits in the budget, every value
-is retained and the quantile is exact.
+Quantiles are **not** additive.  For them we keep a bounded uniform random
+sample per column using *bottom-k* reservoir sampling: every value is assigned a
+random key and we keep the ``capacity`` items with the smallest keys.  This has
+two nice properties:
+
+* it is **order-independent and mergeable** -- merging two reservoirs is just
+  keeping the bottom-k keys of the union, so the result never depends on how the
+  stream was chunked; and
+* when the whole stream fits in ``capacity`` every value is retained, so the
+  quantile is **exact**.
 """
 
 from __future__ import annotations
@@ -17,18 +22,24 @@ import math
 from dataclasses import dataclass, field
 
 import numpy as np
-from numpy.typing import NDArray
+from numpy.typing import ArrayLike, NDArray
 
 __all__ = [
+    "DEFAULT_QUANTILE_SAMPLE_SIZE",
     "StatSpec",
     "OutputsSpec",
     "StatRequest",
     "ColumnPlan",
     "parse_outputs",
     "Moments",
+    "Reservoir",
     "ColumnAccumulator",
+    "empty_accumulator",
     "finalize_column",
 ]
+
+# Default reservoir capacity for quantile estimation.
+DEFAULT_QUANTILE_SAMPLE_SIZE = 200_000
 
 # A single statistic: either a name ("mean", "std", ...) or ("q", probability).
 StatSpec = str | tuple[str, float]
@@ -120,11 +131,7 @@ class Moments:
         total = self.count + other.count
         delta = other.mean - self.mean
         mean = self.mean + delta * other.count / total
-        m2 = (
-            self.m2
-            + other.m2
-            + delta * delta * self.count * other.count / total
-        )
+        m2 = self.m2 + other.m2 + delta * delta * self.count * other.count / total
         return Moments(
             count=total,
             mean=mean,
@@ -148,18 +155,88 @@ class Moments:
         return math.sqrt(self.variance)
 
 
+@dataclass(frozen=True)
+class Reservoir:
+    """A bottom-k uniform sample of a stream, mergeable and order-independent."""
+
+    capacity: int
+    keys: NDArray[np.float64]
+    values: NDArray[np.float64]
+    count: int
+
+    @classmethod
+    def empty(cls, capacity: int) -> Reservoir:
+        return cls(
+            capacity=capacity,
+            keys=np.empty(0, dtype=np.float64),
+            values=np.empty(0, dtype=np.float64),
+            count=0,
+        )
+
+    @classmethod
+    def from_values(
+        cls,
+        values: ArrayLike,
+        capacity: int,
+        rng: np.random.Generator,
+    ) -> Reservoir:
+        vals = np.ascontiguousarray(values, dtype=np.float64)
+        n = vals.size
+        keys = rng.random(n)
+        if n > capacity:
+            idx = np.argpartition(keys, capacity)[:capacity]
+            keys, vals = keys[idx].copy(), vals[idx].copy()
+        return cls(capacity=capacity, keys=keys, values=vals, count=n)
+
+    def merge(self, other: Reservoir) -> Reservoir:
+        capacity = min(self.capacity, other.capacity)
+        keys = np.concatenate([self.keys, other.keys])
+        values = np.concatenate([self.values, other.values])
+        if keys.size > capacity:
+            idx = np.argpartition(keys, capacity)[:capacity]
+            keys, values = keys[idx], values[idx]
+        return Reservoir(
+            capacity=capacity,
+            keys=keys,
+            values=values,
+            count=self.count + other.count,
+        )
+
+    @property
+    def is_exact(self) -> bool:
+        """True if every observed value was retained (quantiles are exact)."""
+        return self.count <= self.capacity
+
+    def quantiles(self, probs: tuple[float, ...]) -> dict[float, float]:
+        if self.values.size == 0:
+            return {p: math.nan for p in probs}
+        estimates = np.quantile(self.values, probs)
+        return {p: float(q) for p, q in zip(probs, estimates)}
+
+
 @dataclass
 class ColumnAccumulator:
-    """Running accumulator for one column across chunks."""
+    """Running accumulator for one column: moments plus an optional reservoir."""
 
     moments: Moments = field(default_factory=Moments)
-    samples: list[NDArray[np.float64]] = field(default_factory=list)
+    reservoir: Reservoir | None = None
 
     def merge(self, other: ColumnAccumulator) -> ColumnAccumulator:
+        if self.reservoir is None:
+            reservoir = other.reservoir
+        elif other.reservoir is None:
+            reservoir = self.reservoir
+        else:
+            reservoir = self.reservoir.merge(other.reservoir)
         return ColumnAccumulator(
             moments=self.moments.merge(other.moments),
-            samples=self.samples + other.samples,
+            reservoir=reservoir,
         )
+
+
+def empty_accumulator(plan: ColumnPlan, capacity: int) -> ColumnAccumulator:
+    reservoir = Reservoir.empty(capacity) if plan.needs_sample else None
+    return ColumnAccumulator(moments=Moments(), reservoir=reservoir)
 
 
 def finalize_column(plan: ColumnPlan, acc: ColumnAccumulator) -> dict[str, float]:
@@ -175,19 +252,11 @@ def finalize_column(plan: ColumnPlan, acc: ColumnAccumulator) -> dict[str, float
         "max": m.maximum if m.count else math.nan,
     }
 
-    quantile_values: dict[float, float] = {}
     probs = plan.quantile_probs
+    quantile_values: dict[float, float] = {}
     if probs:
-        pool = (
-            np.concatenate(acc.samples)
-            if acc.samples
-            else np.empty(0, dtype=np.float64)
-        )
-        if pool.size:
-            estimates = np.quantile(pool, probs)
-            quantile_values = dict(zip(probs, (float(q) for q in estimates)))
-        else:
-            quantile_values = {p: math.nan for p in probs}
+        reservoir = acc.reservoir or Reservoir.empty(0)
+        quantile_values = reservoir.quantiles(probs)
 
     result: dict[str, float] = {}
     for req in plan.requests:
@@ -198,7 +267,3 @@ def finalize_column(plan: ColumnPlan, acc: ColumnAccumulator) -> dict[str, float
             assert req.prob is not None
             result[req.label] = quantile_values[req.prob]
     return result
-
-
-def empty_accumulator() -> ColumnAccumulator:
-    return ColumnAccumulator(moments=Moments(), samples=[])
