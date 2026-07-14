@@ -224,6 +224,63 @@ sim.run(
 result = sim.run(1_000_000, seed=42, backend="processes", n_workers=8)
 ```
 
+## 合成 DSL と適応モンテカルロ
+
+固定回数の batch 実行に加えて、**遅延ストリームを部品合成して「精度に達したら止める」** スタイルも使えます。発想は John Hughes「[なぜ関数プログラミングは重要か](https://www.sampou.org/haskell/article/whyfp.html)」そのもの — プログラムを小さな部品の合成で組み立て、無限の近似列を生成して収束したら打ち切る、という骨格をモンテカルロに当てはめたものです。
+
+### 合成コンビネータ `Stream`
+
+`Stream` は再実行可能な遅延列で、記事の 2 種類の「のり」を提供します。NumPy/Polars 非依存の純 Python です。
+
+- 高階関数: `map` / `filter` / `scan`（running fold）/ `reduce`（foldl）/ `take` / `take_while` / `take_until` / `pairwise` / `zip_with`
+- 無限列と収束判定: `Stream.iterate(f, x0)`（記事の `repeat`）と `within(eps)` / `relative(eps)`
+
+記事のニュートン法の平方根は、そのまま 1 行で書けます:
+
+```python
+from polars_mc import Stream
+
+sqrt2 = Stream.iterate(lambda x: (x + 2 / x) / 2, 1.0).within(1e-12)  # → 1.4142135623...
+```
+
+（数値微分・数値積分まで含めた記事の再現は [`examples/whyfp_numeric.py`](examples/whyfp_numeric.py)。）
+
+### 推定器コンビネータ
+
+モンテカルロ推定は「乱数サンプルの無限列 → running 平均に畳み込み → 標準誤差で停止」という同じ骨格です。よく使う推定器を部品として用意しています（いずれも `Estimate` を返す）。
+
+```python
+import numpy as np
+from polars_mc import estimate_pi, integrate, expectation, probability, Normal
+
+estimate_pi(target_se=1e-3)                              # π を SE 1e-3 まで
+integrate(lambda x: np.sin(x), 0.0, np.pi, target_se=1e-3)   # ∫_0^π sin x dx ≈ 2
+expectation(lambda x: x**2, Normal(0, 1), target_se=2e-3)    # E[X^2] ≈ 1
+probability(lambda x: x > 0, Normal(0, 1), target_se=1e-3)   # P(X>0) ≈ 0.5
+```
+
+`target_se`（目標標準誤差）のほか、記事と同じ `within` / `relative`（連続する推定値の収束）でも停止できます。到達しなければ `max_trials` で打ち切り、`Estimate.converged` が `False` になります。乱数は batch と同じ SeedSequence 方式なので完全に再現します。
+
+### 既存の `Simulation` を適応停止で回す（`run_until`）
+
+多入力・多出力の `Simulation` も、`n_trials` 固定の `run` に加えて **収束するまで回す `run_until`** が使えます。指定した出力列の平均が目標精度に達したら止まります。
+
+```python
+sim = Simulation(
+    inputs={"w": Normal(10.0, 0.2), "h": Normal(5.0, 0.1)},
+    trial=trial,
+    outputs={"area": ["mean", "std"], "passed": ["mean"]},
+)
+
+# area の平均が標準誤差 1e-3 に達するまで回す（他の出力もその時点で集計）
+result = sim.run_until("area", target_se=1e-3, seed=42)
+print(result.summary())
+# Monte Carlo simulation: 2,050,000 trials in 41 chunk(s), seed=42
+#   [adaptive on 'area': converged, se=0.000988]
+```
+
+`run`（batch）と `run_until`（適応）は同じチャンク畳み込みコア（`Moments` モノイドの合成）を共有し、終端が「N 個取る」か「収束まで取る」かだけが違います。各チャンクは i.i.d. なので分位点も健全に推定できます（予算超過時は近似フラグが立つ）。
+
 ## サンプル集
 
 | ファイル | 内容 |
@@ -231,6 +288,9 @@ result = sim.run(1_000_000, seed=42, backend="processes", n_workers=8)
 | [`examples/rectangle.py`](examples/rectangle.py) | 基本。歩留まり計算（array スタイル） |
 | [`examples/lookup.py`](examples/lookup.py) | テーブル参照／補間（VLOOKUP 的処理）。`np.interp` / `np.searchsorted` / ファンシーインデックス |
 | [`examples/shapely_intersection.py`](examples/shapely_intersection.py) | Shapely の幾何交差。`backend="processes"` の効果も計測 |
+| [`examples/whyfp_numeric.py`](examples/whyfp_numeric.py) | 記事の数値例（平方根・数値微分・数値積分）を `Stream` コンビネータだけで再現 |
+| [`examples/pi.py`](examples/pi.py) | π の適応モンテカルロ推定（目標標準誤差で自動停止） |
+| [`examples/integrate.py`](examples/integrate.py) | モンテカルロ数値積分（目標標準誤差で自動停止） |
 
 実行例:
 
@@ -238,6 +298,9 @@ result = sim.run(1_000_000, seed=42, backend="processes", n_workers=8)
 uv run python examples/rectangle.py
 uv run python examples/lookup.py
 uv run --with shapely python examples/shapely_intersection.py
+uv run python examples/whyfp_numeric.py
+uv run python examples/pi.py
+uv run python examples/integrate.py
 ```
 
 ## チャンクサイズの指針
@@ -260,9 +323,15 @@ uv run --with shapely python examples/shapely_intersection.py
 RNG層        rng.py             seed → チャンク別の独立な乱数生成器
 チャンク層   chunk.py           入力サンプリング → trial適用 → 部分集計
 集計層       aggregate.py       加法的モーメント合成 + 分位点サブサンプリング
-実行層       engine.py          チャンク計画・並列実行・合成
+実行層       engine.py          チャンク計画・並列実行・合成（run / run_until）
 結果層       result.py          SimulationResult（summary / to_dict / to_polars）
+
+合成コア     stream.py          遅延コンビネータ DSL（map/scan/take_until/within/…）
+ストリーム層 sampling.py        分布 → 再現可能なサンプル無限列
+推定器層     estimate.py        expectation / probability / integrate / estimate_pi
 ```
+
+`stream.py` は記事「なぜ関数プログラミングは重要か」のエッセンス（高階関数と遅延無限列）を純 Python で表した合成コアです。`engine.py` の `run`（batch）と `run_until`（適応停止）はどちらもこのコアの上で、`aggregate.Moments` のモノイド合成をチャンク列に畳み込むだけの実装になっています。
 
 チャンクをまたいで厳密に合成できるのは **加法的な統計量** だけです。そのためエンジンは列ごとに count / mean / M2（偏差平方和）/ min / max を保持し、数値的に安定な Chan の並列アルゴリズムで合成します。分位点だけは合成不能なのでサブサンプル推定にしています（上記「分位点の厳密性について」を参照）。
 
@@ -272,7 +341,7 @@ RNG層        rng.py             seed → チャンク別の独立な乱数生�
 
 ```bash
 uv sync               # 実行用 + 開発用の依存をインストール
-uv run pytest         # テスト（39件）
+uv run pytest         # テスト（80件）
 uv run ruff check .   # リント
 uv run mypy src       # 型チェック（strict）
 ```

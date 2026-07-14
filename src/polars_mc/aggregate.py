@@ -110,6 +110,28 @@ class Moments:
     minimum: float = math.inf
     maximum: float = -math.inf
 
+    @classmethod
+    def from_array(cls, values: NDArray[np.generic]) -> Moments:
+        """Summarise a 1-D array into a single moment record.
+
+        Booleans are treated as 0/1, so the mean of a boolean array is the rate
+        of ``True`` -- exactly what a probability estimate needs.
+        """
+        arr = np.asarray(values, dtype=np.float64).ravel()
+        n = arr.size
+        if n == 0:
+            return cls()
+        mean = float(arr.mean())
+        deviations = arr - mean
+        m2 = float(deviations @ deviations)
+        return cls(
+            count=n,
+            mean=mean,
+            m2=m2,
+            minimum=float(arr.min()),
+            maximum=float(arr.max()),
+        )
+
     def merge(self, other: Moments) -> Moments:
         """Combine two independent moment summaries (Chan et al., 1979)."""
         if self.count == 0:
@@ -146,6 +168,17 @@ class Moments:
     @property
     def std(self) -> float:
         return math.sqrt(self.variance)
+
+    @property
+    def standard_error(self) -> float:
+        """Standard error of the mean (``std / sqrt(count)``).
+
+        This is the natural convergence yardstick for a Monte Carlo estimate:
+        the running mean is trusted to roughly ``standard_error`` of the truth.
+        """
+        if self.count < 2:
+            return math.nan
+        return self.std / math.sqrt(self.count)
 
 
 @dataclass

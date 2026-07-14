@@ -16,6 +16,10 @@ class SimulationResult:
     ``stats`` maps each output column to ``{statistic_label: value}``.  Quantiles
     estimated from a subsample (rather than the full population) are listed in
     ``approximate_columns``.
+
+    The ``converged`` / ``standard_error`` / ``target`` fields are populated only
+    by an adaptive :meth:`~polars_mc.engine.Simulation.run_until`; for a fixed-N
+    :meth:`~polars_mc.engine.Simulation.run` they stay ``None``.
     """
 
     n_trials: int
@@ -23,6 +27,9 @@ class SimulationResult:
     seed: int
     stats: dict[str, dict[str, float]]
     approximate_columns: frozenset[str]
+    converged: bool | None = None
+    standard_error: float | None = None
+    target: str | None = None
 
     def __getitem__(self, column: str) -> dict[str, float]:
         return self.stats[column]
@@ -48,10 +55,15 @@ class SimulationResult:
 
     def summary(self) -> str:
         """Human-readable multi-line summary."""
-        lines = [
+        header = (
             f"Monte Carlo simulation: {self.n_trials:,} trials "
-            f"in {self.n_chunks} chunk(s), seed={self.seed}",
-        ]
+            f"in {self.n_chunks} chunk(s), seed={self.seed}"
+        )
+        if self.converged is not None:
+            status = "converged" if self.converged else "stopped at max_trials"
+            se = "" if self.standard_error is None else f", se={self.standard_error:.3g}"
+            header += f" [adaptive on '{self.target}': {status}{se}]"
+        lines = [header]
         for col, values in self.stats.items():
             approx = " (quantiles approximate)" if col in self.approximate_columns else ""
             lines.append(f"  {col}{approx}:")

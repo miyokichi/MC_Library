@@ -14,11 +14,14 @@ identical to the sequential one, bit for bit.
 
 from __future__ import annotations
 
+import math
 import pickle
 from collections.abc import Iterator
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from typing import Literal
+
+import numpy as np
 
 from .aggregate import (
     ColumnAccumulator,
@@ -30,8 +33,11 @@ from .aggregate import (
 )
 from .chunk import TrialFn, TrialStyle, classify_trial, run_chunk
 from .distributions import Distribution
+from .estimate import DEFAULT_MAX_TRIALS
 from .result import SimulationResult
 from .rng import Generator, spawn_generators
+from .sampling import DEFAULT_STREAM_CHUNK
+from .stream import Stream
 
 __all__ = [
     "Simulation",
@@ -48,6 +54,9 @@ Backend = Literal["sequential", "processes"]
 # One unit of work handed to the executor: (chunk size, rng, quantile sample size).
 ChunkTask = tuple[int, Generator, int]
 
+# Per-column accumulators for one chunk, keyed by column name.
+ChunkAccumulators = dict[str, ColumnAccumulator]
+
 
 def _chunk_sizes(n_trials: int, chunk_size: int) -> list[int]:
     full, remainder = divmod(n_trials, chunk_size)
@@ -55,6 +64,13 @@ def _chunk_sizes(n_trials: int, chunk_size: int) -> list[int]:
     if remainder:
         sizes.append(remainder)
     return sizes
+
+
+def _merge_all(
+    acc: ChunkAccumulators, chunk: ChunkAccumulators
+) -> ChunkAccumulators:
+    """Monoidal combine of two per-column accumulator maps (used as a fold step)."""
+    return {name: acc[name].merge(chunk[name]) for name in acc}
 
 
 @dataclass(frozen=True)
@@ -205,12 +221,12 @@ class Simulation:
         else:
             raise ValueError(f"Unknown backend {backend!r}.")
 
-        accumulators: dict[str, ColumnAccumulator] = {
-            p.name: empty_accumulator() for p in self._plans
-        }
-        for chunk_acc in chunk_results:
-            for name, acc in chunk_acc.items():
-                accumulators[name] = accumulators[name].merge(acc)
+        # Fold the per-chunk accumulators with the same monoid the streaming
+        # path uses -- batch is just this fold over a bounded chunk stream.
+        accumulators = Stream.from_iterable(chunk_results).reduce(
+            _merge_all,
+            {p.name: empty_accumulator() for p in self._plans},
+        )
 
         stats = {
             plan.name: finalize_column(plan, accumulators[plan.name])
@@ -226,6 +242,133 @@ class Simulation:
             seed=seed,
             stats=stats,
             approximate_columns=approximate,
+        )
+
+    def run_until(
+        self,
+        target: str,
+        *,
+        target_se: float | None = None,
+        within: float | None = None,
+        relative: float | None = None,
+        seed: int = 0,
+        chunk_size: int | None = None,
+        max_trials: int = DEFAULT_MAX_TRIALS,
+    ) -> SimulationResult:
+        """Run adaptively until ``target``'s running mean converges.
+
+        Instead of a fixed ``n_trials``, this consumes an *unbounded* stream of
+        chunks and stops as soon as the ``target`` output column's estimate is
+        good enough -- the article's "generate approximations, stop when close"
+        skeleton applied to the whole simulation.  All requested outputs are
+        finalised at the stopping point.
+
+        Parameters
+        ----------
+        target:
+            Name of the output column whose mean drives the stopping decision.
+        target_se:
+            Stop when ``target``'s standard error of the mean is ``<= target_se``.
+        within / relative:
+            Stop when successive running means differ by ``<= within`` (absolute)
+            or ``<= relative * |mean|``.  These mirror the article's ``within`` /
+            ``relative`` convergence tests.
+        seed:
+            Master seed; reproducible exactly like :meth:`run`.
+        chunk_size:
+            Samples per chunk (defaults to a stream-sized chunk so convergence is
+            checked often).
+        max_trials:
+            Hard cap; if reached first, the result is flagged ``converged=False``.
+
+        Notes
+        -----
+        Because every chunk is i.i.d., the first ``quantile_sample_size`` retained
+        samples form a valid uniform sample, so quantiles remain sound (flagged
+        approximate once the run outgrows that budget).
+        """
+        names = {p.name for p in self._plans}
+        if target not in names:
+            raise ValueError(
+                f"target {target!r} is not an output column; choose from {sorted(names)}."
+            )
+        if chunk_size is not None and chunk_size < 1:
+            raise ValueError(f"chunk_size must be >= 1, got {chunk_size}.")
+        if max_trials < 1:
+            raise ValueError(f"max_trials must be >= 1, got {max_trials}.")
+
+        chunk = min(max_trials, chunk_size or DEFAULT_STREAM_CHUNK)
+        needs_sample = any(p.needs_sample for p in self._plans)
+
+        def chunk_source() -> Iterator[ChunkAccumulators]:
+            root = np.random.SeedSequence(seed)
+            retained = 0
+            while True:
+                (child,) = root.spawn(1)
+                rng = np.random.default_rng(child)
+                if needs_sample:
+                    sample_size = min(chunk, max(0, self.quantile_sample_size - retained))
+                    retained += sample_size
+                else:
+                    sample_size = 0
+                yield run_chunk(
+                    inputs=self.inputs,
+                    trial=self.trial,
+                    plans=self._plans,
+                    n=chunk,
+                    rng=rng,
+                    sample_size=sample_size,
+                    style=self._style,
+                )
+
+        empty: ChunkAccumulators = {p.name: empty_accumulator() for p in self._plans}
+        running = Stream(chunk_source).scan(_merge_all, empty).drop(1)
+
+        max_chunks = max(1, math.ceil(max_trials / chunk))
+        prev_mean: float | None = None
+        last = empty
+        converged = False
+        n_chunks_used = 0
+        for i, acc in enumerate(running, start=1):
+            last = acc
+            n_chunks_used = i
+            moments = acc[target].moments
+            if (
+                target_se is not None
+                and moments.count >= 2
+                and moments.standard_error <= target_se
+            ):
+                converged = True
+                break
+            if prev_mean is not None:
+                delta = abs(moments.mean - prev_mean)
+                if within is not None and delta <= within:
+                    converged = True
+                    break
+                if relative is not None and delta <= relative * abs(moments.mean):
+                    converged = True
+                    break
+            prev_mean = moments.mean
+            if i >= max_chunks:
+                break
+
+        stats = {
+            plan.name: finalize_column(plan, last[plan.name]) for plan in self._plans
+        }
+        n_used = last[target].moments.count
+        exhaustive = not needs_sample or n_used <= self.quantile_sample_size
+        approximate = frozenset(
+            p.name for p in self._plans if p.needs_sample and not exhaustive
+        )
+        return SimulationResult(
+            n_trials=n_used,
+            n_chunks=n_chunks_used,
+            seed=seed,
+            stats=stats,
+            approximate_columns=approximate,
+            converged=converged,
+            standard_error=last[target].moments.standard_error,
+            target=target,
         )
 
     def _run_processes(

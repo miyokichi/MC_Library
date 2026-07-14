@@ -40,14 +40,28 @@ from .engine import (
     Backend,
     Simulation,
 )
+from .estimate import (
+    Estimate,
+    estimate_mean,
+    estimate_pi,
+    expectation,
+    integrate,
+    probability,
+)
 from .result import SimulationResult
+from .sampling import DEFAULT_STREAM_CHUNK, input_stream, sample_stream
+from .stream import Stream
 
 __version__ = "0.1.0"
 
 __all__ = [
+    # Batch engine
     "Simulation",
     "SimulationResult",
     "Backend",
+    "DEFAULT_CHUNK_SIZE",
+    "DEFAULT_QUANTILE_SAMPLE_SIZE",
+    # Distributions
     "Distribution",
     "Normal",
     "Uniform",
@@ -56,6 +70,16 @@ __all__ = [
     "Exponential",
     "Bernoulli",
     "Constant",
-    "DEFAULT_CHUNK_SIZE",
-    "DEFAULT_QUANTILE_SAMPLE_SIZE",
+    # Composable streaming core
+    "Stream",
+    "sample_stream",
+    "input_stream",
+    "DEFAULT_STREAM_CHUNK",
+    # Adaptive estimators
+    "Estimate",
+    "estimate_mean",
+    "expectation",
+    "probability",
+    "integrate",
+    "estimate_pi",
 ]
