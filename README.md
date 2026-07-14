@@ -288,6 +288,7 @@ print(result.summary())
 | [`examples/rectangle.py`](examples/rectangle.py) | 基本。歩留まり計算（array スタイル） |
 | [`examples/lookup.py`](examples/lookup.py) | テーブル参照／補間（VLOOKUP 的処理）。`np.interp` / `np.searchsorted` / ファンシーインデックス |
 | [`examples/shapely_intersection.py`](examples/shapely_intersection.py) | Shapely の幾何交差。`backend="processes"` の効果も計測 |
+| [`examples/ellipse_intersection.py`](examples/ellipse_intersection.py) | 多角形近似した楕円同士の接触（重なり）面積。交差多角形の頂点数が閾値以下の試行だけ近似頂点数を2倍にして再計算（適応細分化）＋ `run_until` で自動停止 |
 | [`examples/whyfp_numeric.py`](examples/whyfp_numeric.py) | 記事の数値例（平方根・数値微分・数値積分）を `Stream` コンビネータだけで再現 |
 | [`examples/pi.py`](examples/pi.py) | π の適応モンテカルロ推定（目標標準誤差で自動停止） |
 | [`examples/integrate.py`](examples/integrate.py) | モンテカルロ数値積分（目標標準誤差で自動停止） |
@@ -298,6 +299,7 @@ print(result.summary())
 uv run python examples/rectangle.py
 uv run python examples/lookup.py
 uv run --with shapely python examples/shapely_intersection.py
+uv run --with shapely python examples/ellipse_intersection.py
 uv run python examples/whyfp_numeric.py
 uv run python examples/pi.py
 uv run python examples/integrate.py
