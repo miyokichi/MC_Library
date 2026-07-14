@@ -19,9 +19,8 @@ import pickle
 from collections.abc import Iterator
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
+from itertools import count
 from typing import Literal
-
-import numpy as np
 
 from .aggregate import (
     ColumnAccumulator,
@@ -35,7 +34,7 @@ from .chunk import TrialFn, TrialStyle, classify_trial, run_chunk
 from .distributions import Distribution
 from .estimate import DEFAULT_MAX_TRIALS
 from .result import SimulationResult
-from .rng import Generator, spawn_generators
+from .rng import Generator, generator_stream, spawn_generators
 from .sampling import DEFAULT_STREAM_CHUNK
 from .stream import Stream
 
@@ -300,29 +299,22 @@ class Simulation:
         chunk = min(max_trials, chunk_size or DEFAULT_STREAM_CHUNK)
         needs_sample = any(p.needs_sample for p in self._plans)
 
-        def chunk_source() -> Iterator[ChunkAccumulators]:
-            root = np.random.SeedSequence(seed)
-            retained = 0
-            while True:
-                (child,) = root.spawn(1)
-                rng = np.random.default_rng(child)
-                if needs_sample:
-                    sample_size = min(chunk, max(0, self.quantile_sample_size - retained))
-                    retained += sample_size
-                else:
-                    sample_size = 0
-                yield run_chunk(
-                    inputs=self.inputs,
-                    trial=self.trial,
-                    plans=self._plans,
-                    n=chunk,
-                    rng=rng,
-                    sample_size=sample_size,
-                    style=self._style,
-                )
+        def execute(index: int, rng: Generator) -> ChunkAccumulators:
+            return run_chunk(
+                inputs=self.inputs,
+                trial=self.trial,
+                plans=self._plans,
+                n=chunk,
+                rng=rng,
+                sample_size=self._stream_sample_size(index, chunk, needs_sample),
+                style=self._style,
+            )
 
+        # The unbounded chunk stream is the shared generator stream, executed:
+        # same seeding as `run`, just consumed lazily instead of by the chunk.
+        chunks = Stream(count).zip_with(generator_stream(seed), execute)
         empty: ChunkAccumulators = {p.name: empty_accumulator() for p in self._plans}
-        running = Stream(chunk_source).scan(_merge_all, empty).drop(1)
+        running = chunks.scan(_merge_all, empty).drop(1)
 
         max_chunks = max(1, math.ceil(max_trials / chunk))
         prev_mean: float | None = None
@@ -400,6 +392,20 @@ class Simulation:
                 "closure), and guard your script entry point with "
                 "`if __name__ == '__main__':`."
             ) from exc
+
+    def _stream_sample_size(self, index: int, chunk: int, needs_sample: bool) -> int:
+        """Rows chunk ``index`` of an unbounded run retains for quantiles.
+
+        Chunks are i.i.d., so filling the budget from the leading chunks leaves
+        the pooled sample uniform.  After ``index`` chunks the pool holds
+        ``min(index * chunk, budget)`` rows, so each chunk's share is a pure
+        function of its index -- no counter to carry, which keeps the chunk
+        stream re-runnable.
+        """
+        if not needs_sample:
+            return 0
+        remaining = self.quantile_sample_size - index * chunk
+        return max(0, min(chunk, remaining))
 
     def _sample_size_for(
         self,
