@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import NDArray
 
-from polars_mc import Normal, Simulation
+from mc_lib import Normal, Simulation
 
 
 def trial(

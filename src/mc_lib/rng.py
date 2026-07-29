@@ -3,7 +3,7 @@
 This module is the library's *single source of seeding*.  A master ``seed``
 deterministically produces one independent :class:`numpy.random.Generator` per
 chunk via :class:`numpy.random.SeedSequence` spawning, exposed as a lazy,
-re-runnable :class:`~polars_mc.stream.Stream`.  This guarantees:
+re-runnable :class:`~mc_lib.stream.Stream`.  This guarantees:
 
 * the same ``seed`` always yields identical results,
 * two different chunks never share a random stream, and

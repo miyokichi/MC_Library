@@ -2,7 +2,7 @@
 
 This is the article's骨格 applied to Monte Carlo: take an infinite lazy stream
 of random samples, ``map`` each chunk to the quantity of interest, ``scan`` the
-running :class:`~polars_mc.aggregate.Moments` (Chan's stable combine), and stop
+running :class:`~mc_lib.aggregate.Moments` (Chan's stable combine), and stop
 as soon as the estimate is good enough (a standard-error target, or the
 ``within`` / ``relative`` convergence tests from the article).  Nothing here is
 new machinery -- every estimator is just a different way of gluing the same

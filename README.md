@@ -1,11 +1,11 @@
-# polars_mc
+# mc_lib
 
 [Polars](https://pola.rs/) と NumPy を基盤にした、**ベクトル化モンテカルロ・シミュレーション**ライブラリ。
 
 利用者が書くのは **1試行ぶんの普通の関数だけ**。乱数の再現性・チャンク分割・並列評価・チャンク横断の集計合成は実行基盤が引き受けます。さらにその基盤自体が、John Hughes「[なぜ関数プログラミングは重要か](https://www.sampou.org/haskell/article/whyfp.html)」の遅延ストリーム合成として組み立てられており、**どの層も単独で使えます**。
 
 ```python
-from polars_mc import Simulation, Normal
+from mc_lib import Simulation, Normal
 
 def trial(width, height):                      # 1試行を普通の関数で書く
     area = width * height
@@ -30,9 +30,9 @@ print(sim.run(1_000_000, seed=42).summary())   # 100万試行、メモリ一定
 | **③ シミュレーション基盤** | `engine.py` ほか | 多入力・多出力の `Simulation`。固定回数の `run` と適応停止の `run_until` | + Polars |
 
 ```python
-from polars_mc import Stream            # ① だけ使う
-from polars_mc import sample_stream     # ② だけ使う
-from polars_mc import Simulation        # ③ フルスタック
+from mc_lib import Stream            # ① だけ使う
+from mc_lib import sample_stream     # ② だけ使う
+from mc_lib import Simulation        # ③ フルスタック
 ```
 
 ③ は ② の上に、② は ① の上に載っているだけで、逆向きの依存はありません。② と ③ は乱数のシード生成も共有しています — `rng.generator_stream(seed)` という「チャンクごとの独立乱数生成器の無限 `Stream`」が唯一の種であり、② はそれを `map` してサンプル配列にし、③ はそれを `map` して実行済みチャンクにします。ストリームを流れるのは**乱数の種であってサンプルデータではない**ので、`backend="processes"` でも小さな生成器だけがワーカーに渡り、巨大な行列はプロセス境界を越えません。
@@ -57,7 +57,7 @@ uv sync                 # 実行用 + 開発用の依存
 別プロジェクトから依存に加える場合（ローカルパス例）:
 
 ```bash
-uv add path/to/polars-mc
+uv add path/to/mc-lib
 ```
 
 ランタイム依存は `polars` と `numpy` だけです。Python 3.12 以上。
@@ -74,7 +74,7 @@ uv add path/to/polars-mc
 記事のニュートン法による平方根は、そのまま1行になります。
 
 ```python
-from polars_mc import Stream
+from mc_lib import Stream
 
 Stream.iterate(lambda x: (x + 2 / x) / 2, 1.0).within(1e-12)   # 1.414213562373095
 ```
@@ -91,7 +91,7 @@ Stream.iterate(lambda x: (x + 2 / x) / 2, 1.0).within(1e-12)   # 1.4142135623730
 
 ```python
 import numpy as np
-from polars_mc import sample_stream, Normal
+from mc_lib import sample_stream, Normal
 
 # 標準正規で X > 2 となる割合を、チャンクごとに眺める
 rates = (
@@ -109,7 +109,7 @@ rates = (
 
 ```python
 import numpy as np
-from polars_mc import estimate_pi, integrate, expectation, probability, Normal
+from mc_lib import estimate_pi, integrate, expectation, probability, Normal
 
 estimate_pi(target_se=1e-3)
 # Estimate(value=3.14189, standard_error=0.000999, n_samples=2,700,000, converged)
@@ -133,7 +133,7 @@ probability(lambda x: x > 0, Normal(0, 1), target_se=1e-3)      # P(X>0) ≈ 0.5
 自前の推定量を同じ骨格で回したいときは、チャンク列を作って `estimate_mean` に渡すだけです。
 
 ```python
-from polars_mc import estimate_mean, sample_stream, Exponential
+from mc_lib import estimate_mean, sample_stream, Exponential
 
 chunks = sample_stream(Exponential(2.0), seed=0).map(lambda a: np.minimum(a, 5.0))
 est = estimate_mean(chunks, target_se=1e-3)     # E[min(X, 5)] を SE 1e-3 まで
@@ -153,7 +153,7 @@ est = estimate_mean(chunks, target_se=1e-3)     # E[min(X, 5)] を SE 1e-3 ま�
 
 ```python
 import numpy as np
-from polars_mc import Simulation, Normal
+from mc_lib import Simulation, Normal
 
 # 1) 1試行を普通の関数として書く（width, height は NumPy 配列で渡ってくる）
 def trial(width, height):
@@ -250,7 +250,7 @@ def trial(df: pl.LazyFrame) -> pl.LazyFrame:
 
 ```python
 import numpy as np
-from polars_mc import Distribution
+from mc_lib import Distribution
 
 class Categorical(Distribution):
     """重み付きでカテゴリ（整数コード）を選ぶ離散分布。"""

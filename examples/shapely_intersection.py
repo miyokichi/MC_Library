@@ -25,7 +25,7 @@ import numpy as np
 import shapely
 from numpy.typing import NDArray
 
-from polars_mc import Normal, Simulation
+from mc_lib import Normal, Simulation
 
 # 固定の参照ポリゴン (一度だけ定義し、trial からクロージャで参照する)。
 REFERENCE = shapely.box(0.0, 0.0, 10.0, 10.0)

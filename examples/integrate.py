@@ -15,7 +15,7 @@ import math
 
 import numpy as np
 
-from polars_mc import integrate
+from mc_lib import integrate
 
 
 def main() -> None:

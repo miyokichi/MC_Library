@@ -1,6 +1,6 @@
 """Distributions as reproducible, lazy, infinite sample streams.
 
-This layer is a thin ``map`` over :func:`polars_mc.rng.generator_stream`: take
+This layer is a thin ``map`` over :func:`mc_lib.rng.generator_stream`: take
 the library's one stream of per-chunk generators and draw from a distribution
 with each.  The engine maps the *same* generator stream to executed chunks, so a
 streaming run and a batch run share one seeding mechanism rather than two

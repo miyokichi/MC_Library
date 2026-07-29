@@ -6,7 +6,7 @@ import math
 
 import pytest
 
-from polars_mc.stream import Stream
+from mc_lib.stream import Stream
 
 
 # -- basic combinators ------------------------------------------------------

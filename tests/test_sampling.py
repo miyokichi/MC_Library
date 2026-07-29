@@ -5,9 +5,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from polars_mc.distributions import Normal, Uniform
-from polars_mc.rng import spawn_generators
-from polars_mc.sampling import input_stream, sample_stream
+from mc_lib.distributions import Normal, Uniform
+from mc_lib.rng import spawn_generators
+from mc_lib.sampling import input_stream, sample_stream
 
 
 def test_sample_stream_reproducible() -> None:

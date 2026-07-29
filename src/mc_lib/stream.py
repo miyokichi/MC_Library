@@ -1,6 +1,6 @@
 """Lazy stream combinators: the composable core (the "glue" of the library).
 
-This module is the functional heart of ``polars_mc``, distilled from John
+This module is the functional heart of ``mc_lib``, distilled from John
 Hughes' *Why Functional Programming Matters*.  A :class:`Stream` is a
 *re-runnable* lazy sequence -- a value, not a one-shot iterator -- so the same
 stream can be assembled by composition and consumed more than once with

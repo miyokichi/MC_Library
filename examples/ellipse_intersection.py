@@ -31,7 +31,7 @@ import numpy as np
 import shapely
 from numpy.typing import NDArray
 
-from polars_mc import Normal, Simulation, Uniform
+from mc_lib import Normal, Simulation, Uniform
 
 # 楕円 A（固定）: 原点中心、半径 3.0 x 1.5、回転なし
 A_RX, A_RY = 3.0, 1.5

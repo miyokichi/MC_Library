@@ -18,8 +18,8 @@ class SimulationResult:
     ``approximate_columns``.
 
     The ``converged`` / ``standard_error`` / ``target`` fields are populated only
-    by an adaptive :meth:`~polars_mc.engine.Simulation.run_until`; for a fixed-N
-    :meth:`~polars_mc.engine.Simulation.run` they stay ``None``.
+    by an adaptive :meth:`~mc_lib.engine.Simulation.run_until`; for a fixed-N
+    :meth:`~mc_lib.engine.Simulation.run` they stay ``None``.
     """
 
     n_trials: int

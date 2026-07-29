@@ -1,4 +1,4 @@
-"""Tests for the polars_mc Monte Carlo engine."""
+"""Tests for the mc_lib Monte Carlo engine."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import numpy as np
 import polars as pl
 import pytest
 
-from polars_mc import (
+from mc_lib import (
     Bernoulli,
     Constant,
     Exponential,
@@ -18,9 +18,9 @@ from polars_mc import (
     Triangular,
     Uniform,
 )
-from polars_mc.aggregate import Moments, parse_outputs
-from polars_mc.chunk import classify_trial
-from polars_mc.rng import spawn_generators
+from mc_lib.aggregate import Moments, parse_outputs
+from mc_lib.chunk import classify_trial
+from mc_lib.rng import spawn_generators
 
 
 def rectangle_trial(df: pl.LazyFrame) -> pl.LazyFrame:

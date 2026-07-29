@@ -6,7 +6,7 @@ John Hughes の記事に出てくる 3 つの数値アルゴリズム
 * 数値微分（誤差項の消去による改良つき）
 * 数値積分（区間再帰による改良列）
 
-を、いずれも ``polars_mc.stream.Stream`` の高階コンビネータと遅延無限列だけで書く。
+を、いずれも ``mc_lib.stream.Stream`` の高階コンビネータと遅延無限列だけで書く。
 どれも「無限の近似列を作り → 部品を合成して改良し → 収束したら打ち切る」という
 同じ骨格でできていることが、この DSL の本質（＝記事の本質）である。
 
@@ -20,7 +20,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Iterator
 
-from polars_mc.stream import Stream
+from mc_lib.stream import Stream
 
 # --------------------------------------------------------------------------
 # 1. ニュートン・ラフソン法の平方根

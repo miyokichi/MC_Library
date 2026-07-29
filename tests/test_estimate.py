@@ -6,8 +6,8 @@ import math
 
 import numpy as np
 
-from polars_mc.distributions import Normal
-from polars_mc.estimate import (
+from mc_lib.distributions import Normal
+from mc_lib.estimate import (
     Estimate,
     estimate_pi,
     expectation,

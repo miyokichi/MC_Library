@@ -1,4 +1,4 @@
-"""polars_mc: vectorized Monte Carlo simulation on top of Polars.
+"""mc_lib: vectorized Monte Carlo simulation on top of Polars.
 
 Write a single *chunk trial* as a Polars expression pipeline (one row = one
 trial); the engine handles reproducible random sampling, chunking, Polars-driven
@@ -7,7 +7,7 @@ parallel evaluation and mergeable aggregation.
 Example
 -------
 >>> import polars as pl
->>> from polars_mc import Simulation, Normal
+>>> from mc_lib import Simulation, Normal
 >>> def trial(df: pl.LazyFrame) -> pl.LazyFrame:
 ...     return df.with_columns(
 ...         area=pl.col("w") * pl.col("h"),

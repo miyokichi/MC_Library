@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from polars_mc import Normal, Simulation, Uniform
+from mc_lib import Normal, Simulation, Uniform
 
 
 def area_trial(w: np.ndarray, h: np.ndarray) -> dict[str, np.ndarray]:

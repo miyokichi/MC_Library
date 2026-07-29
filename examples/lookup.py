@@ -19,7 +19,7 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import NDArray
 
-from polars_mc import Simulation, Uniform
+from mc_lib import Simulation, Uniform
 
 # --- 参照テーブル (trial の外で一度だけ定義し、クロージャで参照する) ------------- #
 

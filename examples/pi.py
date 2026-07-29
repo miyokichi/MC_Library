@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import math
 
-from polars_mc import estimate_pi
+from mc_lib import estimate_pi
 
 
 def main() -> None:
