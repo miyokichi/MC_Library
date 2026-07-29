@@ -3,9 +3,6 @@ name = "polars-mc"
 version = "0.1.0"
 description = "Vectorized Monte Carlo simulation engine on top of Polars: write one chunk-trial, get parallel chunked simulation and merged statistics."
 readme = "README.md"
-authors = [
-    { name = "miyokichi", email = "minminzemi81018@gmail.com" }
-]
 requires-python = ">=3.12"
 dependencies = [
     "polars>=1.0",
